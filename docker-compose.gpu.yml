@@ -1,0 +1,166 @@
+# GPU 版:NVIDIA CUDA 環境(Linux 原生,或 Windows 11 + WSL2 + Docker Desktop)
+# 啟動:docker compose -f docker-compose.gpu.yml up -d
+# 本檔管理三個服務:vllm(推論)、gateway(OpenAI 相容代理層,容器化)、open-webui(聊天介面)。
+# open-webui 預設經由 compose 內網服務名 gateway:8080 連線,不需宿主機行程。
+# 若改用 scripts\start-stack.ps1 的「gateway 跑在宿主機 .venv」開發模式,腳本會自動
+# 設定 WEBUI_OPENAI_BASE_URL=http://host.docker.internal:8080/v1 覆寫預設值。
+name: qwen35-vllm
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  vllm:
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-latest}
+    container_name: qwen35_vllm
+    restart: unless-stopped
+    ipc: host                                   # vLLM 多行程需要宿主機共享記憶體
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - ./models:/models                        # HuggingFace 權重快取,重啟不需重新下載
+    environment:
+      HF_HOME: /models
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    entrypoint: ["vllm", "serve"]
+    command:
+      - ${MODEL_REPO:-Qwen/Qwen3.5-0.8B}
+      - --served-model-name
+      - ${MODEL_NAME:-qwen3.5-0.8b}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
+      - --max-num-seqs
+      - "${VLLM_MAX_NUM_SEQS:-8}"                # 限制並行序列數,避免 linear attention 的 recurrent state 佔滿顯存
+      - --language-model-only                   # 只載入語言模型,略過視覺編碼器以節省顯存
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'            # 伺服器端預設關閉 thinking
+    deploy:
+      resources:
+        limits:
+          cpus: "${VLLM_CPU_LIMIT:-4.0}"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 40
+      start_period: 120s                        # 首次啟動需下載權重,給足暖機時間
+    logging: *default-logging
+
+  gateway:
+    build:
+      context: ./gateway
+      target: runtime
+    image: qwen35-stack/gateway:latest
+    container_name: qwen35_gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    environment:
+      # 容器內網路:vllm 服務名 + 容器內埠 8000(不是宿主機映射埠 VLLM_PORT)
+      LLM_BASE_URL: http://vllm:8000/v1
+      LLM_MODEL_NAME: ${MODEL_NAME:-qwen3.5-0.8b}
+      LLM_API_KEY: ${LLM_API_KEY:-EMPTY}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.7}
+      LLM_READ_TIMEOUT: ${LLM_READ_TIMEOUT:-120}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_DIR: /var/log/gateway
+    volumes:
+      - ./logs/gateway:/var/log/gateway         # 結構化 JSON Lines 日誌落地到宿主機
+    depends_on:
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_TAG:-main}
+    container_name: qwen35_openwebui
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      # 預設連 compose 內網的 gateway 容器;僅在 gateway 改跑於宿主機時才需覆寫
+      # (例如 scripts\start-stack.ps1 開發模式會設 WEBUI_OPENAI_BASE_URL=http://host.docker.internal:8080/v1)
+      OPENAI_API_BASE_URL: ${WEBUI_OPENAI_BASE_URL:-http://gateway:8080/v1}
+      OPENAI_API_KEY: ${LLM_API_KEY:-EMPTY}
+      ENABLE_OPENAI_API: "true"
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_AUTH: ${WEBUI_AUTH:-false}
+      DEFAULT_MODELS: ${MODEL_NAME:-qwen3.5-0.8b}
+      TASK_MODEL_EXTERNAL: ${MODEL_NAME:-qwen3.5-0.8b}
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+      ENABLE_TAGS_GENERATION: "false"
+      ENABLE_AUTOCOMPLETE_GENERATION: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"      # 覆寫成宿主機 gateway 時,原生 Linux 也能解析
+    volumes:
+      - open-webui-data:/app/backend/data
+    deploy:
+      resources:
+        limits:
+          cpus: "${OPEN_WEBUI_CPU_LIMIT:-2.0}"
+          memory: "${OPEN_WEBUI_MEMORY_LIMIT:-2g}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    logging: *default-logging
+
+  # 功能測試:docker compose -f docker-compose.gpu.yml --profile test run --rm unit-test
+  unit-test:
+    profiles: ["test"]
+    build:
+      context: ./gateway
+      target: dev
+    image: qwen35-stack/gateway:dev
+    command: ["pytest", "-m", "not smoke", "-v"]
+    restart: "no"
+    logging: *default-logging
+
+  # 端對端冒煙測試:docker compose -f docker-compose.gpu.yml --profile test run --rm smoke-test
+  smoke-test:
+    profiles: ["test"]
+    build:
+      context: ./gateway
+      target: dev
+    image: qwen35-stack/gateway:dev
+    environment:
+      GATEWAY_BASE_URL: http://gateway:8080
+      SMOKE_TIMEOUT: ${SMOKE_TIMEOUT:-180}
+    command: ["pytest", "-m", "smoke", "-v"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+volumes:
+  open-webui-data:
+    name: open-webui-data                        # 沿用既有 docker run 建立的 volume,避免 compose 專案前綴造成資料「消失」

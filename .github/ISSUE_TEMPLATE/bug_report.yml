@@ -1,0 +1,76 @@
+name: 錯誤回報 (Bug Report)
+description: 回報 vLLM-Demo 專案中的錯誤或非預期行為
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 問題描述
+      description: 請簡要描述你遇到的問題。
+      placeholder: 說明發生了什麼事
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 重現步驟
+      description: 請列出可以重現此問題的具體步驟。
+      placeholder: |
+        1. 執行 '...'
+        2. 呼叫 API '...'
+        3. 觀察到錯誤
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 預期行為
+      description: 你原本預期會發生什麼事？
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 實際行為
+      description: 實際發生了什麼事？
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式
+      description: 你是用哪一種方式啟動整個服務堆疊的？
+      options:
+        - GPU compose (docker-compose.gpu.yml)
+        - CPU compose (docker-compose.cpu.yml)
+        - Windows start-stack.ps1
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境資訊
+      description: 請提供作業系統、Docker 版本、GPU 型號與 VRAM 等資訊。
+      placeholder: |
+        - OS: Windows 11 / Ubuntu 22.04 / macOS ...
+        - Docker 版本: docker --version 的輸出
+        - GPU 型號與 VRAM: 例如 RTX 4090 24GB，若無 GPU 請填「無」
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相關 log
+      description: 請貼上 gateway 與/或 vLLM 的相關 log 內容（可從 logs/ 目錄或 `docker compose logs` 取得）。
+      render: shell
+    validations:
+      required: false

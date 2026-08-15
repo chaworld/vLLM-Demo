@@ -1,0 +1,146 @@
+# CPU 版:無 NVIDIA GPU 的環境,含 macOS(Apple Silicon 走 linux/arm64 映像)
+# 啟動:docker compose -f docker-compose.cpu.yml up -d
+# macOS / ARM 主機請先設定 VLLM_CPU_IMAGE_TAG=latest-arm64
+name: qwen35-vllm-mac
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  vllm:
+    image: vllm/vllm-openai-cpu:${VLLM_CPU_IMAGE_TAG:-latest-x86_64}
+    container_name: qwen35_vllm
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - ./models:/models
+    environment:
+      HF_HOME: /models
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      VLLM_CPU_KVCACHE_SPACE: ${VLLM_CPU_KVCACHE_SPACE:-4}   # KV cache 可用記憶體(GiB)
+      VLLM_CPU_OMP_THREADS_BIND: ${VLLM_CPU_OMP_THREADS_BIND:-auto}
+    entrypoint: ["vllm", "serve"]
+    command:
+      - ${MODEL_REPO:-Qwen/Qwen3.5-0.8B}
+      - --served-model-name
+      - ${MODEL_NAME:-qwen3.5-0.8b}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --dtype
+      - ${VLLM_DTYPE:-bfloat16}                 # 舊 CPU 不支援 bf16 時改設 float32
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      - --language-model-only
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+    deploy:
+      resources:
+        limits:
+          cpus: "${VLLM_CPU_LIMIT:-4.0}"
+          memory: ${VLLM_MEMORY_LIMIT:-8g}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 60
+      start_period: 180s                        # CPU 推論暖機較慢,給足時間
+    logging: *default-logging
+
+  gateway:
+    build: ./gateway
+    image: qwen35-stack/gateway:latest
+    container_name: qwen35_gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    environment:
+      LLM_BASE_URL: http://vllm:8000/v1
+      LLM_MODEL_NAME: ${MODEL_NAME:-qwen3.5-0.8b}
+      LLM_API_KEY: ${LLM_API_KEY:-EMPTY}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
+      LLM_READ_TIMEOUT: ${LLM_READ_TIMEOUT:-300}   # CPU 推論較慢,放寬讀取逾時
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.7}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_DIR: /var/log/gateway
+    volumes:
+      - ./logs/gateway:/var/log/gateway
+    depends_on:
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_TAG:-main}
+    container_name: qwen35_openwebui
+    restart: unless-stopped
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      OPENAI_API_BASE_URL: http://gateway:8080/v1
+      OPENAI_API_KEY: ${LLM_API_KEY:-EMPTY}
+      ENABLE_OPENAI_API: "true"
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_AUTH: ${WEBUI_AUTH:-false}
+      DEFAULT_MODELS: ${MODEL_NAME:-qwen3.5-0.8b}
+      TASK_MODEL_EXTERNAL: ${MODEL_NAME:-qwen3.5-0.8b}
+      ENABLE_EVALUATION_ARENA_MODELS: "false"
+      ENABLE_TAGS_GENERATION: "false"
+      ENABLE_AUTOCOMPLETE_GENERATION: "false"
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    logging: *default-logging
+
+  # 功能測試:docker compose -f docker-compose.cpu.yml --profile test run --rm unit-test
+  unit-test:
+    profiles: ["test"]
+    build:
+      context: ./gateway
+      target: dev
+    image: qwen35-stack/gateway:dev
+    command: ["pytest", "-m", "not smoke", "-v"]
+    restart: "no"
+    logging: *default-logging
+
+  # 端對端冒煙測試:docker compose -f docker-compose.cpu.yml --profile test run --rm smoke-test
+  smoke-test:
+    profiles: ["test"]
+    build:
+      context: ./gateway
+      target: dev
+    image: qwen35-stack/gateway:dev
+    environment:
+      GATEWAY_BASE_URL: http://gateway:8080
+      SMOKE_TIMEOUT: ${SMOKE_TIMEOUT:-600}
+    command: ["pytest", "-m", "smoke", "-v"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+volumes:
+  open-webui-data:

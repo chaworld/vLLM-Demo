@@ -1,0 +1,22 @@
+# 換行符正規化:避免 Windows 貢獻者把 CRLF 提交進 shell 腳本,
+# 導致 Linux/容器內出現 "bad interpreter: /bin/bash^M" 之類的錯誤。
+
+# 預設:所有文字檔在 repo 內與簽出時一律使用 LF
+* text=auto eol=lf
+
+# Windows 專用腳本:簽出時使用 CRLF,由 PowerShell 執行
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二進位檔:不做任何換行轉換
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gz binary
+*.zip binary
+*.safetensors binary
+*.bin binary
