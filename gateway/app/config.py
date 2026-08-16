@@ -73,7 +73,7 @@ class Settings:
             # 若 vLLM 改跑在外部遠端主機,可將 LLM_BASE_URL 手動改成 http://10.0.0.220:8004/v1
             # 若 vLLM 改跑在主機,可將 LLM_BASE_URL 手動改成 http://vllm:8000/v1
             upstream_api_key=_get_str("LLM_API_KEY", "EMPTY"),
-            model_name=_get_str("LLM_MODEL_NAME", "qwen3.5-0.8b"), #gemma-4-26b
+            model_name=_get_str("LLM_MODEL_NAME", "gemma-4-26b"), #gemma-4-26b #qwen3.5-0.8b
             connect_timeout=_get_float("LLM_CONNECT_TIMEOUT", 5.0),
             read_timeout=_get_float("LLM_READ_TIMEOUT", 120.0),
             max_retries=_get_int("LLM_MAX_RETRIES", 2),
