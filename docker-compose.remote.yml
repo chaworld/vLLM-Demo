@@ -23,10 +23,10 @@ services:
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
     environment:
-      # 容器內網路:vllm 服務名 + 容器內埠 8000(不是宿主機映射埠 VLLM_PORT)
-      LLM_BASE_URL: http://vllm:8000/v1
-      # 遠端 vLLM 實際位址,依需求手動改成 http://10.0.0.220:8004/v1(本檔已無本地 vllm 容器)
-      LLM_MODEL_NAME: ${MODEL_NAME:-qwen3.5-0.8b}
+      LLM_BASE_URL: http://10.0.0.220:8004/v1
+      # 若改回本機容器化 vllm,改用 docker-compose.gpu.yml/.cpu.yml(服務名 http://vllm:8000/v1)
+      # 用獨立變數 REMOTE_MODEL_NAME,不共用 gpu/cpu 版的 MODEL_NAME(遠端主機掛的是 gemma-4-26b,非本地 Qwen3.5)
+      LLM_MODEL_NAME: ${REMOTE_MODEL_NAME:-gemma-4-26b}
       LLM_API_KEY: ${LLM_API_KEY:-EMPTY}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.7}
