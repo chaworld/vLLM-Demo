@@ -13,3 +13,10 @@ Thumbs.db
 *.egg-info/
 .coverage
 htmlcov/
+
+# OpenSpec 本機規劃工具鏈(不進公開 demo repo)
+openspec/
+.claude/
+AGENTS.md
+CLAUDE.md
+.openspec-test-*
